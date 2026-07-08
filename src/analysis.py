@@ -26,15 +26,15 @@ def find_stockout_risks(product_stats: pd.DataFrame) -> pd.DataFrame:
         np.inf,
     )
 
-    def classify_risk(row: pd.Series) -> str:
-        days_remaining = row["estimated_days_until_stockout"]
-        if days_remaining <= row["lead_time_days"]:
-            return "high"
-        if days_remaining <= row["lead_time_days"] + MEDIUM_RISK_BUFFER_DAYS:
-            return "medium"
-        return "low"
-
-    df["risk_level"] = df.apply(classify_risk, axis=1)
+    days_remaining = df["estimated_days_until_stockout"]
+    df["risk_level"] = np.select(
+        condlist=[
+            days_remaining <= df["lead_time_days"],
+            days_remaining <= df["lead_time_days"] + MEDIUM_RISK_BUFFER_DAYS,
+        ],
+        choicelist=["high", "medium"],
+        default="low",
+    )
 
     risks = df[df["risk_level"].isin(["high", "medium"])].copy()
     risks = risks.sort_values("estimated_days_until_stockout")

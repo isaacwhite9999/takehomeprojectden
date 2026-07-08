@@ -10,8 +10,11 @@ INVENTORY_COLUMNS = ["product_id", "current_stock", "reorder_level", "lead_time_
 CATALOG_COLUMNS = ["product_id", "product_name", "category", "price"]
 
 
-def read_csv_upload(file_bytes: bytes, filename: str, required_columns: list[str]) -> pd.DataFrame:
+def read_csv_upload(
+    file_bytes: bytes, filename: str | None, required_columns: list[str]
+) -> pd.DataFrame:
     """Parse uploaded bytes into a DataFrame and validate required columns."""
+    filename = filename or "uploaded file"
     try:
         df = pd.read_csv(io.BytesIO(file_bytes))
     except Exception:

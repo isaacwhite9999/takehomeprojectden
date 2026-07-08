@@ -4,12 +4,13 @@ from pydantic import BaseModel
 
 
 class ModelMetrics(BaseModel):
-    """Evaluation metrics from the held-out test split."""
+    """Evaluation metrics from the chronologically held-out test split."""
 
     mae: float
     rmse: float
     r2: float
     training_rows: int
+    test_rows: int
     model_name: str
 
 

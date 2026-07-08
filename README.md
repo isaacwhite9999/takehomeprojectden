@@ -60,13 +60,14 @@ Each stage lives in its own module under `src/`, and `main.py` orchestrates them
 - Per-product statistics: `avg_daily_sales`, `total_units_sold`, `total_revenue`
 - Inventory context: `current_stock`, `reorder_level`, `lead_time_days`, `price`
 - Daily sales are aggregated into weekly per-product totals; each row's target is the **following** week's units sold, so the model learns "given this week, predict next week"
+- A trailing partial week (data ending mid-week) is dropped so it can't corrupt training targets or skew the forecast input
 
 **3. Model training and evaluation** (`src/model.py`)
 
 - `RandomForestRegressor` (200 trees, fixed random state)
-- 80/20 `train_test_split`, evaluated on the held-out split
+- **Chronological 80/20 split** — the most recent weeks are held out for evaluation, since a random split would leak future data into training and overstate accuracy on a forecasting task
 - Metrics returned with every response: **MAE**, **RMSE**, **R²**
-- The most recent week's features are scored to produce next week's forecast
+- After evaluation, the model is refit on the full history and scores the most recent week's features to produce next week's forecast
 
 **4. Business logic** (`src/analysis.py`)
 
@@ -190,10 +191,11 @@ Abbreviated response:
 ```json
 {
   "model_metrics": {
-    "mae": 8.37,
-    "rmse": 11.51,
-    "r2": 0.954,
-    "training_rows": 389,
+    "mae": 9.65,
+    "rmse": 14.11,
+    "r2": 0.93,
+    "training_rows": 288,
+    "test_rows": 72,
     "model_name": "RandomForestRegressor"
   },
   "top_predictions": [
@@ -201,8 +203,8 @@ Abbreviated response:
       "product_id": "P018",
       "product_name": "Wall Clock",
       "category": "home goods",
-      "predicted_next_week_units": 16.9,
-      "predicted_next_week_revenue": 212.1
+      "predicted_next_week_units": 173.8,
+      "predicted_next_week_revenue": 2181.19
     }
   ],
   "stockout_risks": [
@@ -228,13 +230,14 @@ Abbreviated response:
       "recent_14d_units": 27.0
     }
   ],
-  "executive_summary": "Next week we project 356 units sold for roughly $15,396.58 in revenue, led by Wall Clock. Immediate reorders are recommended for stockout-risk items..."
+  "executive_summary": "Next week we project 2,677 units sold for roughly $110,161.23 in revenue, led by Wall Clock. Immediate reorders are recommended for stockout-risk items..."
 }
 ```
 
 ## Design Decisions
 
 - **Weekly aggregation over daily forecasting** — daily retail sales are noisy (many zero-sale days); weekly totals give the model a learnable signal while still answering "what sells next week?"
+- **Chronological holdout over random split** — evaluating on the most recent weeks mirrors how the model is actually used and avoids look-ahead leakage
 - **RandomForest over deep learning** — with ~13 weeks of history per product, a tree ensemble on engineered features is more robust than anything sequence-based, and trains in under a second per request
 - **Stateless pipeline** — each request trains a fresh model on the uploaded data, keeping the API simple and correct for arbitrary uploads
 - **Grounded LLM prompt with mock fallback** — the model summarizes computed results (not raw data), and the API is fully demoable without a key or network access
@@ -242,7 +245,7 @@ Abbreviated response:
 ## Future Improvements
 
 - Per-store forecasting instead of aggregating across stores
-- Time-series-aware validation (rolling-origin backtesting instead of a random split)
+- Rolling-origin backtesting instead of a single chronological holdout
 - Seasonality and holiday features
 - Confidence intervals on predictions
 - Model caching between requests for repeat analyses

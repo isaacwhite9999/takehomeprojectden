@@ -82,6 +82,13 @@ def build_weekly_training_data(
         .sort_values(["product_id", "date"])
     )
 
+    # If the data ends mid-week, the final bucket only covers part of a week.
+    # Drop it: as a training target it would understate demand, and as a
+    # prediction input its low week_units_sold would skew the forecast.
+    last_bucket_end = weekly["date"].max()
+    if merged["date"].max() < last_bucket_end and weekly["date"].nunique() > 1:
+        weekly = weekly[weekly["date"] < last_bucket_end]
+
     weekly["next_week_units_sold"] = weekly.groupby("product_id")["week_units_sold"].shift(-1)
 
     weekly = weekly.merge(

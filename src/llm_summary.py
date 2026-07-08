@@ -7,6 +7,7 @@ returned so the API remains fully functional offline.
 """
 
 import os
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -14,6 +15,12 @@ from openai import OpenAI
 load_dotenv()
 
 DEFAULT_MODEL = "gpt-4o-mini"
+
+
+@lru_cache(maxsize=1)
+def _get_client(api_key: str) -> OpenAI:
+    """Create the OpenAI client once and reuse it across requests."""
+    return OpenAI(api_key=api_key)
 
 SYSTEM_PROMPT = (
     "You are a retail operations analyst writing for store leadership. "
@@ -111,7 +118,7 @@ def generate_summary(
     )
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = _get_client(api_key)
         response = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
             messages=[
