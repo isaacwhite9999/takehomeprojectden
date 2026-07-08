@@ -4,13 +4,18 @@ from pydantic import BaseModel
 
 
 class ModelMetrics(BaseModel):
+    """Evaluation metrics from the held-out test split."""
+
     mae: float
+    rmse: float
     r2: float
     training_rows: int
     model_name: str
 
 
 class Prediction(BaseModel):
+    """Forecasted sales for one product for the upcoming week."""
+
     product_id: str
     product_name: str
     category: str
@@ -19,6 +24,8 @@ class Prediction(BaseModel):
 
 
 class StockoutRisk(BaseModel):
+    """A product whose stock may run out before replenishment arrives."""
+
     product_id: str
     product_name: str
     category: str
@@ -30,6 +37,8 @@ class StockoutRisk(BaseModel):
 
 
 class SlowMover(BaseModel):
+    """Overstocked product with weak overall and recent sales."""
+
     product_id: str
     product_name: str
     category: str
@@ -40,6 +49,8 @@ class SlowMover(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
+    """Full pipeline output returned by /analyze and /sample-analysis."""
+
     model_metrics: ModelMetrics
     top_predictions: list[Prediction]
     stockout_risks: list[StockoutRisk]

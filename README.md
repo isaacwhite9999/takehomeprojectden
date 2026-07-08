@@ -1,169 +1,249 @@
 # AI Retail Sales Copilot API
 
-A backend-only FastAPI service that turns three retail CSVs (sales, inventory, product catalog) into actionable insights:
+A FastAPI backend that turns raw retail CSVs into decisions. Upload sales history, inventory levels, and a product catalog; the service cleans and merges the data, trains a sales forecasting model, flags inventory risks, and generates an executive summary with an LLM.
 
-- Predicts next week's per-product sales with a scikit-learn model
-- Flags products at risk of stocking out before replenishment arrives
-- Identifies slow-moving inventory tying up capital
-- Generates an LLM-written executive summary for store leadership
+## Project Overview
 
-## What this project demonstrates
+Retail teams sit on three disconnected spreadsheets: what sold, what's in stock, and what things cost. This project connects them and answers the questions an operations manager actually asks:
 
-- **Data cleaning with Pandas** — deduplication, missing-value handling, type normalization, and multi-file merging with validation and readable API errors for bad uploads
-- **Machine learning with scikit-learn** — a weekly sales forecasting model with a properly framed prediction target (this week's features → next week's units) and honest evaluation metrics (MAE, R²)
-- **LLM integration** — a focused prompt built from the pipeline's outputs, with a graceful offline fallback when no API key is present
-- **API design with FastAPI** — typed Pydantic response models, multipart file uploads, auto-generated Swagger docs, and clear error handling
-- **Pragmatic scoping** — no database, no auth, no Docker; just a clean, readable pipeline that does one thing well
+- **What will sell next week?** — per-product forecasts from a scikit-learn model
+- **What will run out?** — stockout risk levels based on sales velocity vs. supplier lead time
+- **What isn't moving?** — overstocked products with weak demand, candidates for markdown
+- **What should I do about it?** — a concise, LLM-written executive report
 
-## Project structure
+The scope is intentionally focused: no database, no auth, no Docker. One clean request/response pipeline that demonstrates the complete AI/ML workflow — data cleaning, feature engineering, model training and evaluation, business logic, and LLM integration — behind a well-structured API.
+
+## Architecture
+
+```text
+Sales CSV
+Inventory CSV
+Catalog CSV
+        │
+        ▼
+Data Cleaning (Pandas)
+        │
+        ▼
+Feature Engineering
+        │
+        ▼
+RandomForestRegressor
+        │
+        ├── Sales Forecast
+        ├── Stockout Risk
+        └── Slow Movers
+        │
+        ▼
+LLM Executive Summary
+        │
+        ▼
+JSON API Response
+```
+
+Each stage lives in its own module under `src/`, and `main.py` orchestrates them in `run_pipeline()`. The pipeline is stateless: every request trains on exactly the data it was given.
+
+## ML Pipeline
+
+**1. Data cleaning** (`src/cleaning.py`)
+
+- Remove duplicate rows
+- Drop rows missing `product_id`; normalize IDs to trimmed strings
+- Coerce numeric columns, filling missing/unparseable values with 0
+- Parse dates and drop rows where parsing fails
+- Standardize product names and lowercase categories
+- Left-join sales ← inventory ← catalog on `product_id`
+- Invalid uploads return readable HTTP 400 errors (missing columns, empty files, unparseable CSVs)
+
+**2. Feature engineering** (`src/features.py`)
+
+- Calendar features: `day_of_week`, `week_number`, `month`
+- Per-product statistics: `avg_daily_sales`, `total_units_sold`, `total_revenue`
+- Inventory context: `current_stock`, `reorder_level`, `lead_time_days`, `price`
+- Daily sales are aggregated into weekly per-product totals; each row's target is the **following** week's units sold, so the model learns "given this week, predict next week"
+
+**3. Model training and evaluation** (`src/model.py`)
+
+- `RandomForestRegressor` (200 trees, fixed random state)
+- 80/20 `train_test_split`, evaluated on the held-out split
+- Metrics returned with every response: **MAE**, **RMSE**, **R²**
+- The most recent week's features are scored to produce next week's forecast
+
+**4. Business logic** (`src/analysis.py`)
+
+- **Stockout risk**: `estimated_days_until_stockout = current_stock / avg_daily_sales`, bucketed as **high** (stocks out within the supplier lead time), **medium** (within lead time + 7 days), or **low** (excluded from results)
+- **Slow movers**: products where stock exceeds the reorder level *and* average daily sales *and* last-14-day sales are at or below the median across products
+
+## LLM Pipeline
+
+`src/llm_summary.py` injects the pipeline's structured outputs — top predicted best-sellers, stockout risks, slow movers, and projected totals — into a single prompt, and asks the model to write as a retail operations analyst. The summary covers key insights, reorder recommendations, discount recommendations, business risks, and next actions.
+
+- With `OPENAI_API_KEY` set: calls the OpenAI Chat Completions API (`gpt-4o-mini` by default, configurable via `OPENAI_MODEL`)
+- Without a key (or if the call fails): returns a clearly labeled deterministic mock built from the same numbers, so the API works fully offline
+
+This design keeps the LLM grounded: it summarizes computed results rather than guessing from raw data.
+
+## Folder Structure
 
 ```text
 retail-sales-copilot-api/
 ├── main.py              # FastAPI app, endpoints, pipeline orchestration
 ├── requirements.txt
 ├── .env.example
-├── data/                # Generated sample CSVs (30 products, 2 stores, 90 days)
+├── data/                # Sample dataset: 30 products, 2 stores, 90 days
 │   ├── sample_sales.csv
 │   ├── sample_inventory.csv
 │   └── sample_catalog.csv
 └── src/
     ├── cleaning.py      # Clean and merge the three input files
-    ├── features.py      # Date features, per-product stats, weekly training data
-    ├── model.py         # Train RandomForest, predict next week, report metrics
-    ├── analysis.py      # Stockout risk levels and slow-mover detection
-    ├── llm_summary.py   # OpenAI executive summary with mock fallback
+    ├── features.py      # Date features, product stats, weekly training frame
+    ├── model.py         # Train, evaluate (MAE/RMSE/R²), and forecast
+    ├── analysis.py      # Stockout risk and slow-mover business logic
+    ├── llm_summary.py   # LLM executive summary with offline mock fallback
     ├── schemas.py       # Pydantic response models
     └── utils.py         # CSV upload parsing and validation
 ```
 
-## Tech stack
-
-- **FastAPI** + **Uvicorn** — API server
-- **Pandas** / **NumPy** — data cleaning and feature engineering
-- **scikit-learn** — RandomForestRegressor for weekly sales forecasting
-- **OpenAI API** — executive summary (optional; mock fallback if no key)
-- **python-dotenv** — environment config
-
-## API endpoints
+## API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/` | Project name and available endpoints |
+| GET | `/` | Project overview and endpoint list |
 | GET | `/health` | Health check |
-| POST | `/analyze` | Upload `sales_file`, `inventory_file`, `catalog_file` CSVs and run the full pipeline |
-| GET | `/sample-analysis` | Run the full pipeline on the bundled sample data |
-| GET | `/docs` | Interactive Swagger docs |
+| POST | `/analyze` | Upload `sales_file`, `inventory_file`, `catalog_file` CSVs and run the pipeline |
+| GET | `/sample-analysis` | Run the pipeline on the bundled sample data |
+| GET | `/docs` | Interactive Swagger documentation |
 
-### Response shape (`/analyze` and `/sample-analysis`)
+## Technologies Used
 
-```json
-{
-  "model_metrics": { "mae": 4.2, "r2": 0.87, "training_rows": 350, "model_name": "RandomForestRegressor" },
-  "top_predictions": [ { "product_id": "P001", "product_name": "...", "predicted_next_week_units": 42.0, "...": "..." } ],
-  "stockout_risks": [ { "product_id": "P002", "risk_level": "high", "estimated_days_until_stockout": 3.5, "...": "..." } ],
-  "slow_movers": [ { "product_id": "P003", "current_stock": 120, "avg_daily_sales": 0.4, "...": "..." } ],
-  "executive_summary": "..."
-}
-```
+- **Python 3.11+**
+- **FastAPI** + **Uvicorn** — API framework and server
+- **Pandas** / **NumPy** — data cleaning and feature engineering
+- **scikit-learn** — forecasting model and evaluation metrics
+- **OpenAI API** — executive summary generation
+- **python-dotenv** — environment configuration
 
-## CSV schemas
+## Dataset Schema
 
 **sales CSV**
 
-| column | type |
-|---|---|
-| date | date (YYYY-MM-DD) |
-| product_id | string |
-| units_sold | number |
-| revenue | number |
-| store_id | string |
+| column | type | description |
+|---|---|---|
+| date | date (YYYY-MM-DD) | Day of sale |
+| product_id | string | Product identifier |
+| units_sold | number | Units sold that day |
+| revenue | number | Revenue for the row |
+| store_id | string | Store identifier |
 
 **inventory CSV**
 
-| column | type |
-|---|---|
-| product_id | string |
-| current_stock | number |
-| reorder_level | number |
-| lead_time_days | number |
+| column | type | description |
+|---|---|---|
+| product_id | string | Product identifier |
+| current_stock | number | Units on hand |
+| reorder_level | number | Stock level that triggers a reorder |
+| lead_time_days | number | Days for replenishment to arrive |
 
 **catalog CSV**
 
-| column | type |
-|---|---|
-| product_id | string |
-| product_name | string |
-| category | string |
-| price | number |
+| column | type | description |
+|---|---|---|
+| product_id | string | Product identifier |
+| product_name | string | Display name |
+| category | string | Product category |
+| price | number | Unit price |
 
-## How to run locally
+The bundled sample data covers 30 products across 3 categories, 2 stores, and 90 days of daily sales — including a few duplicates and missing values for the cleaning step to handle.
+
+## Getting Started
 
 ```bash
-git clone <repo-url>
-cd retail-sales-copilot-api
+git clone https://github.com/isaacwhite9999/takehomeprojectden.git
+cd takehomeprojectden
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Optional: enable real LLM summaries
+# Optional: enable real LLM summaries (mock fallback is used otherwise)
 cp .env.example .env   # then add your OPENAI_API_KEY
 
 uvicorn main:app --reload
 ```
 
-The API is now at `http://127.0.0.1:8000` (interactive docs at `/docs`).
+The API runs at `http://127.0.0.1:8000` with interactive docs at `/docs`.
 
-## Example curl requests
+## Example Request/Response
 
 ```bash
-# Health check
-curl http://127.0.0.1:8000/health
-
-# Run the pipeline on the bundled sample data
+# Quickest demo: run the pipeline on the bundled sample data
 curl http://127.0.0.1:8000/sample-analysis
 
-# Upload your own CSVs
+# Or upload your own CSVs
 curl -X POST http://127.0.0.1:8000/analyze \
   -F "sales_file=@data/sample_sales.csv" \
   -F "inventory_file=@data/sample_inventory.csv" \
   -F "catalog_file=@data/sample_catalog.csv"
 ```
 
-## ML approach
+Abbreviated response:
 
-1. **Cleaning** — drop duplicates and rows without a `product_id`, fill missing numerics with 0, parse dates, normalize IDs/text, then merge the three files on `product_id`. Bad uploads return readable 400 errors.
-2. **Features** — date features (`day_of_week`, `week_number`, `month`) plus per-product aggregates: `avg_daily_sales`, `total_units_sold`, `total_revenue`, `current_stock`, `reorder_level`, `lead_time_days`, and `price`.
-3. **Weekly aggregation** — daily sales are rolled up into weekly per-product totals. Each row's target is the *following* week's units sold (`next_week_units_sold`).
-4. **Model** — a `RandomForestRegressor` (200 trees) trained on an 80/20 split, reporting **MAE** and **R²**. The most recent week's features are used to predict the upcoming week.
+```json
+{
+  "model_metrics": {
+    "mae": 8.37,
+    "rmse": 11.51,
+    "r2": 0.954,
+    "training_rows": 389,
+    "model_name": "RandomForestRegressor"
+  },
+  "top_predictions": [
+    {
+      "product_id": "P018",
+      "product_name": "Wall Clock",
+      "category": "home goods",
+      "predicted_next_week_units": 16.9,
+      "predicted_next_week_revenue": 212.1
+    }
+  ],
+  "stockout_risks": [
+    {
+      "product_id": "P005",
+      "product_name": "USB-C Cable",
+      "category": "electronics",
+      "current_stock": 86.0,
+      "avg_daily_sales": 22.27,
+      "lead_time_days": 12.0,
+      "estimated_days_until_stockout": 3.9,
+      "risk_level": "high"
+    }
+  ],
+  "slow_movers": [
+    {
+      "product_id": "P016",
+      "product_name": "Cutting Board",
+      "category": "home goods",
+      "current_stock": 60.0,
+      "reorder_level": 18.0,
+      "avg_daily_sales": 2.3,
+      "recent_14d_units": 27.0
+    }
+  ],
+  "executive_summary": "Next week we project 356 units sold for roughly $15,396.58 in revenue, led by Wall Clock. Immediate reorders are recommended for stockout-risk items..."
+}
+```
 
-**Stockout risk** — `estimated_days_until_stockout = current_stock / avg_daily_sales`, then bucketed: **high** if within `lead_time_days`, **medium** if within `lead_time_days + 7`, **low** otherwise.
+## Design Decisions
 
-**Slow movers** — products where `current_stock > reorder_level`, average daily sales are at or below the median, and sales in the last 14 days are weak.
-
-## LLM approach
-
-`src/llm_summary.py` builds a prompt containing the top 5 predicted best-sellers, top 5 stockout risks, top 5 slow movers, and total projected units/revenue, and asks the model to respond as a retail operations analyst (reorder recommendations, discount recommendations, risks, next actions).
-
-- If `OPENAI_API_KEY` is set, it calls the OpenAI Chat Completions API (`gpt-4o-mini` by default, configurable via `OPENAI_MODEL`).
-- If not, it returns a deterministic mock summary so the API works fully offline.
-
-## Sample data
-
-`data/` contains generated sample CSVs: 30 products across 3 categories (electronics, home goods, apparel), 2 stores, 90 days of daily sales with weekend boosts and per-product trends, plus realistic inventory levels, reorder points, lead times, and prices. A few duplicates and missing values are included so the cleaning step has something to do.
-
-## Design decisions
-
-- **Weekly aggregation over daily forecasting** — daily retail sales are noisy (many zero-sale days); weekly totals give the model a learnable signal while still answering the business question "what sells next week?"
+- **Weekly aggregation over daily forecasting** — daily retail sales are noisy (many zero-sale days); weekly totals give the model a learnable signal while still answering "what sells next week?"
 - **RandomForest over deep learning** — with ~13 weeks of history per product, a tree ensemble on engineered features is more robust than anything sequence-based, and trains in under a second per request
-- **Stateless pipeline, no persistence** — each request trains a fresh model on the uploaded data. That keeps the API simple and correct for arbitrary uploads; caching would be the first optimization if this served real traffic
-- **Mock LLM fallback** — the API is fully functional and demoable without any API key or network access; the mock is clearly labeled so it can't be mistaken for real model output
+- **Stateless pipeline** — each request trains a fresh model on the uploaded data, keeping the API simple and correct for arbitrary uploads
+- **Grounded LLM prompt with mock fallback** — the model summarizes computed results (not raw data), and the API is fully demoable without a key or network access
 
-## Future improvements
+## Future Improvements
 
 - Per-store forecasting instead of aggregating across stores
 - Time-series-aware validation (rolling-origin backtesting instead of a random split)
 - Seasonality and holiday features
 - Confidence intervals on predictions
-- Caching/persisting trained models between requests
+- Model caching between requests for repeat analyses
 - Reorder quantity suggestions (economic order quantity)

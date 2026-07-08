@@ -1,20 +1,34 @@
-"""Train a regression model to predict next week's units sold per product."""
+"""Sales forecasting model: predict next week's units sold per product."""
 
 import pandas as pd
 from fastapi import HTTPException
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import train_test_split
 
 from src.features import MODEL_FEATURES
 
+MIN_TRAINING_ROWS = 10
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+N_ESTIMATORS = 200
 
-def train_and_predict(training: pd.DataFrame, latest_week: pd.DataFrame):
-    """Train a RandomForest on weekly data and predict the upcoming week.
 
-    Returns (metrics_dict, predictions_df).
+def train_and_predict(
+    training: pd.DataFrame, latest_week: pd.DataFrame
+) -> tuple[dict, pd.DataFrame]:
+    """Train a RandomForestRegressor on weekly sales and forecast the upcoming week.
+
+    The model learns the mapping (this week's features -> next week's units sold),
+    is evaluated on a held-out test split, and is then applied to the most recent
+    week of data to produce next week's forecast.
+
+    Returns:
+        metrics: evaluation metrics (MAE, RMSE, R²) plus training metadata.
+        predictions: latest-week rows with predicted units and revenue,
+            sorted best-sellers first.
     """
-    if len(training) < 10:
+    if len(training) < MIN_TRAINING_ROWS:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -26,14 +40,17 @@ def train_and_predict(training: pd.DataFrame, latest_week: pd.DataFrame):
     X = training[MODEL_FEATURES]
     y = training["next_week_units_sold"]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+    )
 
-    model = RandomForestRegressor(n_estimators=200, random_state=42)
+    model = RandomForestRegressor(n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE)
     model.fit(X_train, y_train)
 
     y_pred = model.predict(X_test)
     metrics = {
         "mae": round(float(mean_absolute_error(y_test, y_pred)), 2),
+        "rmse": round(float(root_mean_squared_error(y_test, y_pred)), 2),
         "r2": round(float(r2_score(y_test, y_pred)), 3),
         "training_rows": len(training),
         "model_name": "RandomForestRegressor",

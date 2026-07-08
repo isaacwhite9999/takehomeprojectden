@@ -1,8 +1,8 @@
-"""Feature engineering: date features, per-product stats, and weekly training data."""
+"""Feature engineering: date features, per-product statistics, and weekly training data."""
 
 import pandas as pd
 
-# Features used by the ML model on the weekly-aggregated data.
+# Feature set used by the forecasting model on weekly-aggregated data.
 MODEL_FEATURES = [
     "week_units_sold",
     "avg_daily_sales",
@@ -15,8 +15,22 @@ MODEL_FEATURES = [
     "month",
 ]
 
+# Per-product attributes joined onto each weekly row.
+PRODUCT_ATTRIBUTES = [
+    "avg_daily_sales",
+    "total_units_sold",
+    "total_revenue",
+    "current_stock",
+    "reorder_level",
+    "lead_time_days",
+    "price",
+    "product_name",
+    "category",
+]
+
 
 def add_date_features(merged: pd.DataFrame) -> pd.DataFrame:
+    """Add calendar features derived from the sale date."""
     merged = merged.copy()
     merged["day_of_week"] = merged["date"].dt.dayofweek
     merged["week_number"] = merged["date"].dt.isocalendar().week.astype(int)
@@ -25,8 +39,8 @@ def add_date_features(merged: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_product_stats(merged: pd.DataFrame) -> pd.DataFrame:
-    """Per-product aggregates used for both modeling and inventory analysis."""
-    n_days = max((merged["date"].max() - merged["date"].min()).days + 1, 1)
+    """Compute per-product aggregates used for both modeling and inventory analysis."""
+    observed_days = max((merged["date"].max() - merged["date"].min()).days + 1, 1)
 
     stats = (
         merged.groupby("product_id")
@@ -42,16 +56,22 @@ def build_product_stats(merged: pd.DataFrame) -> pd.DataFrame:
         )
         .reset_index()
     )
-    stats["avg_daily_sales"] = stats["total_units_sold"] / n_days
+    stats["avg_daily_sales"] = stats["total_units_sold"] / observed_days
     return stats
 
 
-def build_weekly_training_data(merged: pd.DataFrame, product_stats: pd.DataFrame):
-    """Aggregate daily sales into weekly product totals, then create
-    (this week's features -> next week's units sold) training pairs.
+def build_weekly_training_data(
+    merged: pd.DataFrame, product_stats: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate daily sales into weekly totals and frame the forecasting problem.
 
-    Returns (training_df, latest_week_df). The latest week has no known
-    target and is used to predict the upcoming week.
+    Each row pairs a product's features for one week with the target
+    `next_week_units_sold` (that same product's sales the following week).
+
+    Returns:
+        training: rows with a known next-week target, used to fit the model.
+        latest_week: the most recent week, whose target is unknown -- these
+            rows are what the model scores to forecast the upcoming week.
     """
     merged = add_date_features(merged)
 
@@ -62,21 +82,11 @@ def build_weekly_training_data(merged: pd.DataFrame, product_stats: pd.DataFrame
         .sort_values(["product_id", "date"])
     )
 
-    # Target: the following week's units sold for the same product.
     weekly["next_week_units_sold"] = weekly.groupby("product_id")["week_units_sold"].shift(-1)
 
-    feature_cols = [
-        "avg_daily_sales",
-        "total_units_sold",
-        "total_revenue",
-        "current_stock",
-        "reorder_level",
-        "lead_time_days",
-        "price",
-        "product_name",
-        "category",
-    ]
-    weekly = weekly.merge(product_stats[["product_id"] + feature_cols], on="product_id", how="left")
+    weekly = weekly.merge(
+        product_stats[["product_id"] + PRODUCT_ATTRIBUTES], on="product_id", how="left"
+    )
 
     training = weekly.dropna(subset=["next_week_units_sold"]).copy()
     latest_week = weekly[weekly["date"] == weekly["date"].max()].copy()
