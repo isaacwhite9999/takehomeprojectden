@@ -1,0 +1,31 @@
+product_id,product_name,category,price
+P001,Wireless Earbuds,electronics,71.68
+P002,Bluetooth Speaker,electronics,48.22
+P003,Phone Charger,electronics,77.6
+P004,Smart Watch,electronics,66.32
+P005,USB-C Cable,electronics,24.09
+P006,Portable Power Bank,electronics,85.79
+P007,Wireless Mouse,electronics,70.78
+P008,Webcam HD,electronics,72.52
+P009,Laptop Stand,electronics,26.47
+P010,LED Desk Lamp,electronics,49.03
+P011,Ceramic Mug Set,home goods,24.83
+P012,Throw Blanket,home goods,47.07
+P013,Scented Candle,home goods,35.75
+P014,Storage Bins,home goods,42.91
+P015,Kitchen Towels,home goods,27.74
+P016,Cutting Board,home goods,19.09
+P017,French Press,home goods,32.18
+P018,Wall Clock,home goods,12.55
+P019,Picture Frame Set,home goods,43.11
+P020,Plant Pot,home goods,35.27
+P021,Cotton T-Shirt,apparel,50.4
+P022,Hoodie,apparel,30.23
+P023,Baseball Cap,apparel,61.03
+P024,Wool Socks,apparel,57.16
+P025,Running Shorts,apparel,51.42
+P026,Rain Jacket,apparel,22.23
+P027,Canvas Tote Bag,apparel,35.84
+P028,Beanie,apparel,14.69
+P029,Leggings,apparel,20.21
+P030,Flannel Shirt,apparel,46.65
